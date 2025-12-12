@@ -1,0 +1,224 @@
+# backend/tests/__init__.py
+# This file marks the tests directory as a Python package.
+
+# backend/tests/conftest.py
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from models import Base, SessionLocal
+
+# Use an in-memory SQLite database for testing
+TEST_DATABASE_URL = "sqlite:///:memory:"
+
+@pytest.fixture(scope="session")
+def test_engine():
+    engine = create_engine(TEST_DATABASE_URL, echo=False)
+    Base.metadata.create_all(bind=engine)
+    yield engine
+    Base.metadata.drop_all(bind=engine)
+
+@pytest.fixture(scope="function")
+def db_session(test_engine):
+    Session = sessionmaker(bind=test_engine)
+    session = Session()
+    yield session
+    session.close()
+
+# backend/tests/test_models.py
+import uuid
+from models import Product, Resource, Alert, Incident, AuditLog, AlertType, AlertStatus, IncidentStatus
+
+def test_product_model(db_session):
+    product = Product(name="Test Product", description="A test product")
+    db_session.add(product)
+    db_session.commit()
+    assert product.id is not None
+    assert product.name == "Test Product"
+
+def test_resource_model(db_session):
+    product = Product(name="Test Product 2")
+    db_session.add(product)
+    db_session.commit()
+    resource = Resource(
+        product_id=product.id,
+        name="Test Resource",
+        cloud_id="i-1234567890abcdef0",
+        cloud_provider="aws",
+        resource_type="ec2",
+        monitoring_enabled=True
+    )
+    db_session.add(resource)
+    db_session.commit()
+    assert resource.id is not None
+    assert resource.product_id == product.id
+
+def test_alert_model(db_session):
+    product = Product(name="Test Product 3")
+    db_session.add(product)
+    db_session.commit()
+    resource = Resource(
+        product_id=product.id,
+        name="Test Resource 2",
+        cloud_id="i-abcdef1234567890",
+        cloud_provider="aws",
+        resource_type="ec2"
+    )
+    db_session.add(resource)
+    db_session.commit()
+    alert = Alert(
+        resource_id=resource.id,
+        type=AlertType.RESOURCE,
+        status=AlertStatus.ACTIVE,
+        title="CPU High",
+        severity="critical"
+    )
+    db_session.add(alert)
+    db_session.commit()
+    assert alert.id is not None
+    assert alert.status == AlertStatus.ACTIVE
+
+def test_incident_model(db_session):
+    incident = Incident(
+        status=IncidentStatus.OPEN,
+        title="Test Incident"
+    )
+    db_session.add(incident)
+    db_session.commit()
+    assert incident.id is not None
+    assert incident.status == IncidentStatus.OPEN
+
+def test_audit_log_model(db_session):
+    audit_log = AuditLog(
+        event_type="alert_generated",
+        event_time="2023-01-01T00:00:00Z"
+    )
+    db_session.add(audit_log)
+    db_session.commit()
+    assert audit_log.id is not None
+    assert audit_log.event_type == "alert_generated"
+
+# backend/tests/test_crud.py
+from crud import (
+    create_product,
+    get_product,
+    get_products,
+    update_product,
+    delete_product,
+)
+
+def test_create_and_get_product(db_session):
+    product = create_product(db_session, name="CRUD Product", description="CRUD test")
+    fetched = get_product(db_session, product.id)
+    assert fetched.id == product.id
+    assert fetched.name == "CRUD Product"
+
+def test_update_product(db_session):
+    product = create_product(db_session, name="Update Product")
+    updated = update_product(db_session, product.id, name="Updated Name", description="Updated Desc")
+    assert updated.name == "Updated Name"
+    assert updated.description == "Updated Desc"
+
+def test_delete_product(db_session):
+    product = create_product(db_session, name="Delete Product")
+    delete_product(db_session, product.id)
+    products = get_products(db_session)
+    assert all(p.id != product.id for p in products)
+
+# backend/tests/test_monitoring.py
+from monitoring import evaluate_metrics
+
+def test_evaluate_metrics_breach():
+    metrics = {"CPUUtilization": 85.0, "MemoryUtilization": 75.0}
+    thresholds = {"CPUUtilization": 80.0, "MemoryUtilization": 80.0}
+    breaches = evaluate_metrics(metrics, thresholds)
+    assert len(breaches) == 1
+    assert breaches[0]["metric"] == "CPUUtilization"
+
+def test_evaluate_metrics_no_breach():
+    metrics = {"CPUUtilization": 50.0, "MemoryUtilization": 60.0}
+    thresholds = {"CPUUtilization": 80.0, "MemoryUtilization": 80.0}
+    breaches = evaluate_metrics(metrics, thresholds)
+    assert breaches == []
+
+# backend/tests/test_alerting.py
+from models import Alert, AlertType, AlertStatus
+from alerting import resolve_alert
+
+def test_resolve_alert(db_session):
+    alert = Alert(
+        type=AlertType.RESOURCE,
+        status=AlertStatus.ACTIVE,
+        title="Test Alert",
+        severity="critical"
+    )
+    db_session.add(alert)
+    db_session.commit()
+    resolved = resolve_alert(db_session, alert, actor="tester")
+    assert resolved.status == AlertStatus.RESOLVED
+    assert resolved.resolved_at is not None
+
+# backend/tests/test_security_events.py
+from security_events import detect_security_event, SECURITY_EVENT_TYPES
+from models import Resource, Product
+
+def test_detect_security_event(db_session):
+    product = Product(name="Sec Product")
+    db_session.add(product)
+    db_session.commit()
+    resource = Resource(
+        product_id=product.id,
+        name="Sec Resource",
+        cloud_id="i-sec123",
+        cloud_provider="aws",
+        resource_type="ec2"
+    )
+    db_session.add(resource)
+    db_session.commit()
+    alert = detect_security_event(
+        db=db_session,
+        resource_id=resource.id,
+        event_type=SECURITY_EVENT_TYPES[0],
+        actor="tester",
+        details={"ip": "1.2.3.4"}
+    )
+    assert alert.type == "security"
+    assert alert.status == "active"
+    assert alert.severity == "critical"
+
+# backend/tests/test_audit_log.py
+from audit_log import get_audit_log, get_audit_logs
+from models import AuditLog
+
+def test_get_audit_log(db_session):
+    audit_log = AuditLog(
+        event_type="alert_generated",
+        event_time="2023-01-01T00:00:00Z"
+    )
+    db_session.add(audit_log)
+    db_session.commit()
+    fetched = get_audit_log(db_session, audit_log.id)
+    assert fetched.id == audit_log.id
+
+def test_get_audit_logs(db_session):
+    audit_log1 = AuditLog(event_type="alert_generated", event_time="2023-01-01T00:00:00Z")
+    audit_log2 = AuditLog(event_type="alert_resolved", event_time="2023-01-02T00:00:00Z")
+    db_session.add(audit_log1)
+    db_session.add(audit_log2)
+    db_session.commit()
+    logs = get_audit_logs(db_session)
+    assert len(logs) >= 2
+
+# backend/tests/test_main.py
+from fastapi.testclient import TestClient
+from main import app
+
+client = TestClient(app)
+
+def test_health_check():
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+
+def test_docs_available():
+    response = client.get("/docs")
+    assert response.status_code == 200

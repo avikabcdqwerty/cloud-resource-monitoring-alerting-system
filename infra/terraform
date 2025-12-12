@@ -1,0 +1,143 @@
+# infra/terraform/main.tf
+terraform {
+  required_version = ">= 1.5.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 5.0.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+# CloudWatch log group for audit logs (immutable, secure)
+resource "aws_cloudwatch_log_group" "audit_log" {
+  name              = "/cloud-monitoring/audit"
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.audit_log_key.arn
+}
+
+resource "aws_kms_key" "audit_log_key" {
+  description             = "KMS key for encrypting audit logs"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+}
+
+# IAM role for monitoring automation
+resource "aws_iam_role" "monitoring_role" {
+  name = "cloud-monitoring-automation"
+  assume_role_policy = data.aws_iam_policy_document.monitoring_assume.json
+}
+
+data "aws_iam_policy_document" "monitoring_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com", "lambda.amazonaws.com"]
+    }
+  }
+}
+
+# Attach policies for CloudWatch, EC2, SNS, etc.
+resource "aws_iam_role_policy_attachment" "monitoring_cloudwatch" {
+  role       = aws_iam_role.monitoring_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "monitoring_sns" {
+  role       = aws_iam_role.monitoring_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSNSFullAccess"
+}
+
+# SNS topic for alert notifications
+resource "aws_sns_topic" "alerts" {
+  name = "cloud-monitoring-alerts"
+  kms_master_key_id = aws_kms_key.audit_log_key.arn
+}
+
+# SNS topic subscription for email alerts
+resource "aws_sns_topic_subscription" "alerts_email" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
+}
+
+# SNS topic subscription for Slack via HTTPS webhook (using AWS Chatbot or Lambda relay)
+resource "aws_sns_topic_subscription" "alerts_slack" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "https"
+  endpoint  = var.slack_webhook_url
+}
+
+# CloudWatch metric alarm example for EC2 CPU
+resource "aws_cloudwatch_metric_alarm" "ec2_cpu_high" {
+  alarm_name          = "EC2HighCPU"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 300
+  statistic           = "Average"
+  threshold           = 80
+  alarm_description   = "Alert when EC2 CPU exceeds 80%"
+  dimensions = {
+    InstanceId = var.ec2_instance_id
+  }
+  alarm_actions = [aws_sns_topic.alerts.arn]
+}
+
+# Outputs
+output "audit_log_group_name" {
+  value = aws_cloudwatch_log_group.audit_log.name
+}
+
+output "sns_alerts_topic_arn" {
+  value = aws_sns_topic.alerts.arn
+}
+
+output "monitoring_role_arn" {
+  value = aws_iam_role.monitoring_role.arn
+}
+
+# infra/terraform/variables.tf
+variable "aws_region" {
+  description = "AWS region to deploy resources"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "alert_email" {
+  description = "Email address for alert notifications"
+  type        = string
+}
+
+variable "slack_webhook_url" {
+  description = "Slack webhook URL for alert notifications"
+  type        = string
+}
+
+variable "ec2_instance_id" {
+  description = "EC2 instance ID to monitor"
+  type        = string
+}
+
+# infra/terraform/outputs.tf
+output "audit_log_group_arn" {
+  value = aws_cloudwatch_log_group.audit_log.arn
+}
+
+output "audit_log_kms_key_arn" {
+  value = aws_kms_key.audit_log_key.arn
+}
+
+output "sns_alerts_topic_name" {
+  value = aws_sns_topic.alerts.name
+}
+
+output "monitoring_role_name" {
+  value = aws_iam_role.monitoring_role.name
+}

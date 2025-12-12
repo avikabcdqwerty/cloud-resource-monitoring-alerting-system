@@ -1,0 +1,539 @@
+// frontend/src/App.tsx
+import React from "react";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import Dashboard from "./components/Dashboard";
+import Alerts from "./components/Alerts";
+import Products from "./components/Products";
+import AuditTrail from "./components/AuditTrail";
+import SecurityEvents from "./components/SecurityEvents";
+import Navbar from "./components/Navbar";
+
+const App: React.FC = () => (
+  <Router>
+    <Navbar />
+    <Routes>
+      <Route path="/" element={<Dashboard />} />
+      <Route path="/alerts" element={<Alerts />} />
+      <Route path="/products" element={<Products />} />
+      <Route path="/audit" element={<AuditTrail />} />
+      <Route path="/security-events" element={<SecurityEvents />} />
+    </Routes>
+  </Router>
+);
+
+export default App;
+
+// frontend/src/components/Navbar.tsx
+import React from "react";
+import { Link } from "react-router-dom";
+
+const Navbar: React.FC = () => (
+  <nav style={{ padding: "1rem", background: "#222", color: "#fff" }}>
+    <Link to="/" style={{ marginRight: "2rem", color: "#fff" }}>Dashboard</Link>
+    <Link to="/alerts" style={{ marginRight: "2rem", color: "#fff" }}>Alerts</Link>
+    <Link to="/products" style={{ marginRight: "2rem", color: "#fff" }}>Products</Link>
+    <Link to="/audit" style={{ marginRight: "2rem", color: "#fff" }}>Audit Trail</Link>
+    <Link to="/security-events" style={{ color: "#fff" }}>Security Events</Link>
+  </nav>
+);
+
+export default Navbar;
+
+// frontend/src/components/Dashboard.tsx
+import React, { useEffect, useState } from "react";
+import { getResourceMetrics } from "../services/api";
+import { ResourceMetrics } from "../types";
+
+const Dashboard: React.FC = () => {
+  const [metrics, setMetrics] = useState<ResourceMetrics[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    getResourceMetrics().then(data => {
+      setMetrics(data);
+      setLoading(false);
+    });
+  }, []);
+
+  return (
+    <div style={{ padding: "2rem" }}>
+      <h2>Resource Metrics Dashboard</h2>
+      {loading ? (
+        <p>Loading metrics...</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Resource ID</th>
+              <th>Metrics</th>
+              <th>Breaches</th>
+            </tr>
+          </thead>
+          <tbody>
+            {metrics.map((rm) => (
+              <tr key={rm.resource_id}>
+                <td>{rm.resource_id}</td>
+                <td>
+                  {Object.entries(rm.metrics).map(([metric, value]) => (
+                    <div key={metric}>{metric}: {value ?? "N/A"}</div>
+                  ))}
+                </td>
+                <td>
+                  {rm.breaches.length === 0 ? (
+                    <span style={{ color: "green" }}>None</span>
+                  ) : (
+                    rm.breaches.map((b, idx) => (
+                      <div key={idx} style={{ color: "red" }}>
+                        {b.metric} ({b.value} > {b.threshold})
+                      </div>
+                    ))
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
+export default Dashboard;
+
+// frontend/src/components/Alerts.tsx
+import React, { useEffect, useState } from "react";
+import { getAlerts, resolveAlert } from "../services/api";
+import { Alert } from "../types";
+
+const Alerts: React.FC = () => {
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    getAlerts().then(data => {
+      setAlerts(data);
+      setLoading(false);
+    });
+  }, []);
+
+  const handleResolve = async (alertId: string) => {
+    await resolveAlert(alertId);
+    setAlerts(alerts.map(a => a.id === alertId ? { ...a, status: "resolved" } : a));
+  };
+
+  return (
+    <div style={{ padding: "2rem" }}>
+      <h2>Alerts</h2>
+      {loading ? (
+        <p>Loading alerts...</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Type</th>
+              <th>Status</th>
+              <th>Severity</th>
+              <th>Triggered At</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {alerts.map((alert) => (
+              <tr key={alert.id}>
+                <td>{alert.title}</td>
+                <td>{alert.type}</td>
+                <td>{alert.status}</td>
+                <td>{alert.severity}</td>
+                <td>{alert.triggered_at}</td>
+                <td>
+                  {alert.status !== "resolved" && (
+                    <button onClick={() => handleResolve(alert.id)}>Resolve</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
+export default Alerts;
+
+// frontend/src/components/Products.tsx
+import React, { useEffect, useState } from "react";
+import { getProducts, createProduct, updateProduct, deleteProduct } from "../services/api";
+import { Product } from "../types";
+
+const Products: React.FC = () => {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [newProduct, setNewProduct] = useState<{ name: string; description: string }>({ name: "", description: "" });
+
+  useEffect(() => {
+    getProducts().then(data => {
+      setProducts(data);
+      setLoading(false);
+    });
+  }, []);
+
+  const handleCreate = async () => {
+    const created = await createProduct(newProduct.name, newProduct.description);
+    setProducts([...products, created]);
+    setNewProduct({ name: "", description: "" });
+  };
+
+  const handleUpdate = async (id: string) => {
+    const updated = await updateProduct(id, newProduct.name, newProduct.description);
+    setProducts(products.map(p => p.id === id ? updated : p));
+    setNewProduct({ name: "", description: "" });
+  };
+
+  const handleDelete = async (id: string) => {
+    await deleteProduct(id);
+    setProducts(products.filter(p => p.id !== id));
+  };
+
+  return (
+    <div style={{ padding: "2rem" }}>
+      <h2>Products</h2>
+      <div>
+        <input
+          type="text"
+          placeholder="Name"
+          value={newProduct.name}
+          onChange={e => setNewProduct({ ...newProduct, name: e.target.value })}
+        />
+        <input
+          type="text"
+          placeholder="Description"
+          value={newProduct.description}
+          onChange={e => setNewProduct({ ...newProduct, description: e.target.value })}
+        />
+        <button onClick={handleCreate}>Create</button>
+      </div>
+      {loading ? (
+        <p>Loading products...</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Description</th>
+              <th>Created At</th>
+              <th>Updated At</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {products.map((product) => (
+              <tr key={product.id}>
+                <td>{product.name}</td>
+                <td>{product.description}</td>
+                <td>{product.created_at}</td>
+                <td>{product.updated_at}</td>
+                <td>
+                  <button onClick={() => handleUpdate(product.id)}>Update</button>
+                  <button onClick={() => handleDelete(product.id)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
+export default Products;
+
+// frontend/src/components/AuditTrail.tsx
+import React, { useEffect, useState } from "react";
+import { getAuditLogs } from "../services/api";
+import { AuditLog } from "../types";
+
+const AuditTrail: React.FC = () => {
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+
+  useEffect(() => {
+    getAuditLogs().then(data => {
+      setLogs(data);
+      setLoading(false);
+    });
+  }, []);
+
+  return (
+    <div style={{ padding: "2rem" }}>
+      <h2>Audit Trail</h2>
+      {loading ? (
+        <p>Loading audit logs...</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Event Type</th>
+              <th>Event Time</th>
+              <th>Actor</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.map((log) => (
+              <tr key={log.id}>
+                <td>{log.event_type}</td>
+                <td>{log.event_time}</td>
+                <td>{log.actor}</td>
+                <td>{JSON.stringify(log.details)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+};
+
+export default AuditTrail;
+
+// frontend/src/components/SecurityEvents.tsx
+import React, { useEffect, useState } from "react";
+import { getSecurityEventTypes, detectSecurityEvent } from "../services/api";
+import { SecurityEvent } from "../types";
+
+const SecurityEvents: React.FC = () => {
+  const [eventTypes, setEventTypes] = useState<string[]>([]);
+  const [event, setEvent] = useState<SecurityEvent>({ resource_id: "", event_type: "", actor: "", details: {} });
+  const [result, setResult] = useState<any>(null);
+
+  useEffect(() => {
+    getSecurityEventTypes().then(setEventTypes);
+  }, []);
+
+  const handleDetect = async () => {
+    const res = await detectSecurityEvent(event);
+    setResult(res);
+  };
+
+  return (
+    <div style={{ padding: "2rem" }}>
+      <h2>Security Events</h2>
+      <div>
+        <input
+          type="text"
+          placeholder="Resource ID"
+          value={event.resource_id}
+          onChange={e => setEvent({ ...event, resource_id: e.target.value })}
+        />
+        <select
+          value={event.event_type}
+          onChange={e => setEvent({ ...event, event_type: e.target.value })}
+        >
+          <option value="">Select Event Type</option>
+          {eventTypes.map((type) => (
+            <option key={type} value={type}>{type}</option>
+          ))}
+        </select>
+        <input
+          type="text"
+          placeholder="Actor"
+          value={event.actor}
+          onChange={e => setEvent({ ...event, actor: e.target.value })}
+        />
+        <input
+          type="text"
+          placeholder="Details (JSON)"
+          value={JSON.stringify(event.details)}
+          onChange={e => {
+            try {
+              setEvent({ ...event, details: JSON.parse(e.target.value) });
+            } catch {
+              // ignore parse error
+            }
+          }}
+        />
+        <button onClick={handleDetect}>Detect Event</button>
+      </div>
+      {result && (
+        <div style={{ marginTop: "2rem" }}>
+          <h3>Result</h3>
+          <pre>{JSON.stringify(result, null, 2)}</pre>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default SecurityEvents;
+
+// frontend/src/services/api.ts
+import axios from "axios";
+import { ResourceMetrics, Alert, Product, AuditLog, SecurityEvent } from "../types";
+
+const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
+
+export const getResourceMetrics = async (): Promise<ResourceMetrics[]> => {
+  const res = await axios.get(`${API_BASE}/monitoring/resources/metrics`);
+  return res.data;
+};
+
+export const getAlerts = async (): Promise<Alert[]> => {
+  const res = await axios.get(`${API_BASE}/alerting/alerts/`);
+  return res.data;
+};
+
+export const resolveAlert = async (alertId: string): Promise<Alert> => {
+  const res = await axios.post(`${API_BASE}/alerting/alerts/${alertId}/resolve`);
+  return res.data;
+};
+
+export const getProducts = async (): Promise<Product[]> => {
+  const res = await axios.get(`${API_BASE}/products/`);
+  return res.data;
+};
+
+export const createProduct = async (name: string, description: string): Promise<Product> => {
+  const res = await axios.post(`${API_BASE}/products/`, { name, description });
+  return res.data;
+};
+
+export const updateProduct = async (id: string, name: string, description: string): Promise<Product> => {
+  const res = await axios.put(`${API_BASE}/products/${id}`, { name, description });
+  return res.data;
+};
+
+export const deleteProduct = async (id: string): Promise<void> => {
+  await axios.delete(`${API_BASE}/products/${id}`);
+};
+
+export const getAuditLogs = async (): Promise<AuditLog[]> => {
+  const res = await axios.get(`${API_BASE}/audit-log/`);
+  return res.data;
+};
+
+export const getSecurityEventTypes = async (): Promise<string[]> => {
+  const res = await axios.get(`${API_BASE}/security-events/types`);
+  return res.data;
+};
+
+export const detectSecurityEvent = async (event: SecurityEvent): Promise<any> => {
+  const res = await axios.post(`${API_BASE}/security-events/detect`, event);
+  return res.data;
+};
+
+// frontend/src/types/index.ts
+export interface ResourceMetrics {
+  resource_id: string;
+  metrics: { [key: string]: number | null };
+  breaches: Array<{ metric: string; value: number; threshold: number }>;
+}
+
+export interface Alert {
+  id: string;
+  resource_id?: string;
+  type: string;
+  status: string;
+  title: string;
+  description?: string;
+  triggered_at: string;
+  resolved_at?: string;
+  severity: string;
+  details?: object;
+}
+
+export interface Product {
+  id: string;
+  name: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AuditLog {
+  id: string;
+  incident_id?: string;
+  alert_id?: string;
+  event_type: string;
+  event_time: string;
+  actor?: string;
+  details?: object;
+}
+
+export interface SecurityEvent {
+  resource_id: string;
+  event_type: string;
+  actor?: string;
+  details?: object;
+}
+
+// frontend/package.json
+{
+  "name": "cloud-resource-monitoring-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@types/react": "^18.2.14",
+    "@types/react-dom": "^18.2.7",
+    "axios": "^1.6.7",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.3",
+    "typescript": "^5.4.5"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  }
+}
+
+// frontend/tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES6",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "esnext",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx"
+  },
+  "include": ["src"]
+}
+
+// frontend/public/index.html
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cloud Resource Monitoring Dashboard</title>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
+
+// frontend/src/index.tsx
+import React from "react";
+import ReactDOM from "react-dom/client";
+import App from "./App";
+
+const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);

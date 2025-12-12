@@ -1,0 +1,152 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+*.sqlite3
+.env
+.env.*
+*.db
+*.sqlite
+*.coverage
+.coverage.*
+.cache/
+.mypy_cache/
+.pytest_cache/
+*.pot
+*.mo
+
+# FastAPI (no special files, covered by Python ignores)
+
+# PostgreSQL
+*.sql
+*.dump
+*.psql
+*.pgdata
+*.pgpass
+
+# React
+node_modules/
+build/
+dist/
+*.log
+.env
+.env.*
+*.cache/
+*.local
+*.DS_Store
+
+# AWS/Grafana/Prometheus (no local files, but ignore credentials)
+.aws/
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.jks
+*.tfstate
+*.tfstate.*
+.terraform/
+terraform.tfvars
+*.auto.tfvars
+*.bak
+
+# Slack API/SMTP (ignore secrets)
+secrets.json
+*.secrets
+*.env.local
+*.env.production
+*.env.development
+
+# Docker
+*.tar
+*.img
+*.container
+*.pid
+
+# Terraform
+.terraform/
+terraform.tfstate
+terraform.tfstate.*
+crash.log
+*.tfvars
+*.tfplan
+*.backup
+
+# Grafana
+grafana.db
+grafana.ini
+
+# General
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+*.old
+*.lock
+*.pid
+*.seed
+*.out
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDEs/editors
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+*.code-workspace
+
+# Test output
+*.pytest_cache/
+*.tox/
+*.coverage
+htmlcov/
+test-results/
+test-output/
+
+# Misc
+*.log
+*.gz
+*.zip
+*.tar
+*.rar
+*.7z
+*.tgz
+
+# Ignore frontend build artifacts
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+
+# Ignore backend test artifacts
+backend/__pycache__/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.coverage
+backend/htmlcov/
+backend/dist/
+backend/build/
+backend/*.egg-info/
+
+# Ignore infra artifacts
+infra/.terraform/
+infra/terraform.tfstate
+infra/terraform.tfstate.*
+infra/*.tfvars
+infra/*.tfplan
+infra/crash.log
+infra/*.backup
