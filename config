@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AuditLogEntry",
+  "description": "Schema definition for audit log entries stored in DynamoDB for Cloud Resource Monitoring & Alerting System.",
+  "type": "object",
+  "properties": {
+    "alert_id": {
+      "type": "string",
+      "description": "Unique identifier for the alert or audit event."
+    },
+    "event_timestamp": {
+      "type": "integer",
+      "description": "UTC timestamp (epoch seconds) when the event occurred."
+    },
+    "action": {
+      "type": "string",
+      "description": "Type of action or event (e.g., onboard_resource, alert_triggered, alert_resolved, security_event, alert_processing_failed)."
+    },
+    "resource_type": {
+      "type": "string",
+      "description": "Type of the monitored resource (e.g., EC2, RDS, S3, Lambda)."
+    },
+    "resource_id": {
+      "type": "string",
+      "description": "Identifier of the monitored resource."
+    },
+    "metric_name": {
+      "type": "string",
+      "description": "Name of the metric associated with the alert/event (if applicable)."
+    },
+    "status": {
+      "type": "string",
+      "description": "Status of the event (e.g., triggered, resolved, failure, success)."
+    },
+    "details": {
+      "type": "string",
+      "description": "Additional details or context for the event, may be a JSON-encoded string."
+    },
+    "user_identity": {
+      "type": "string",
+      "description": "User identity or principal associated with the event (JSON-encoded, if applicable)."
+    },
+    "event_name": {
+      "type": "string",
+      "description": "CloudTrail event name for security events (if applicable)."
+    },
+    "resource": {
+      "type": "string",
+      "description": "Resource affected by the event (for security events, may be a JSON-encoded string)."
+    },
+    "ttl": {
+      "type": "integer",
+      "description": "Time-to-live (epoch seconds) for DynamoDB automatic expiration."
+    }
+  },
+  "required": [
+    "alert_id",
+    "event_timestamp",
+    "action",
+    "status",
+    "details",
+    "ttl"
+  ],
+  "additionalProperties": true
+}

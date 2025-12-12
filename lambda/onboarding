@@ -1,0 +1,254 @@
+import os
+import json
+import logging
+import boto3
+from botocore.exceptions import ClientError
+from typing import Any, Dict, List
+
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Environment variables (set via Terraform)
+AUDIT_LOG_TABLE = os.environ.get("AUDIT_LOG_TABLE")
+SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN")
+DASHBOARD_CONFIG_S3 = os.environ.get("DASHBOARD_CONFIG_S3")
+ALERT_THRESHOLDS_S3 = os.environ.get("ALERT_THRESHOLDS_S3")
+
+# AWS clients
+dynamodb = boto3.resource("dynamodb")
+sns = boto3.client("sns")
+cloudwatch = boto3.client("cloudwatch")
+s3 = boto3.client("s3")
+
+def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Lambda entry point for automatic onboarding of new cloud resources.
+    Expects event with resource details.
+    """
+    logger.info("Received onboarding event: %s", json.dumps(event))
+    try:
+        resource_info = extract_resource_info(event)
+        logger.info("Extracted resource info: %s", resource_info)
+
+        # Step 1: Validate resource info
+        validate_resource_info(resource_info)
+
+        # Step 2: Create CloudWatch alarms for the resource
+        thresholds = fetch_alert_thresholds()
+        create_resource_alarms(resource_info, thresholds)
+
+        # Step 3: Update dashboard config if needed
+        update_dashboard_config(resource_info)
+
+        # Step 4: Log onboarding event to DynamoDB audit log
+        log_audit_event(
+            action="onboard_resource",
+            resource_info=resource_info,
+            status="success",
+            details="Resource onboarded and monitoring configured."
+        )
+
+        # Step 5: Notify DevOps team of onboarding
+        notify_onboarding(resource_info)
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"message": "Resource onboarded successfully."})
+        }
+    except Exception as e:
+        logger.error("Onboarding failed: %s", str(e), exc_info=True)
+        log_audit_event(
+            action="onboard_resource",
+            resource_info=event,
+            status="failure",
+            details=str(e)
+        )
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": str(e)})
+        }
+
+def extract_resource_info(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Extracts resource information from the event.
+    Supports EC2, RDS, S3, Lambda, etc.
+    """
+    # Example event structure:
+    # {
+    #   "resource_type": "EC2",
+    #   "resource_id": "i-xxxxxxxxxxxxxxx",
+    #   "tags": {...},
+    #   "account_id": "...",
+    #   "region": "us-east-1"
+    # }
+    required_fields = ["resource_type", "resource_id", "region"]
+    for field in required_fields:
+        if field not in event:
+            raise ValueError(f"Missing required field: {field}")
+    return {
+        "resource_type": event["resource_type"],
+        "resource_id": event["resource_id"],
+        "tags": event.get("tags", {}),
+        "account_id": event.get("account_id", ""),
+        "region": event["region"]
+    }
+
+def validate_resource_info(resource_info: Dict[str, Any]) -> None:
+    """
+    Validates resource information for completeness and supported types.
+    """
+    supported_types = ["EC2", "RDS", "S3", "Lambda"]
+    if resource_info["resource_type"] not in supported_types:
+        raise ValueError(f"Unsupported resource type: {resource_info['resource_type']}")
+
+def fetch_alert_thresholds() -> Dict[str, Any]:
+    """
+    Fetches alert thresholds from S3 configuration.
+    """
+    bucket, key = parse_s3_uri(ALERT_THRESHOLDS_S3)
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        thresholds = json.loads(response["Body"].read())
+        logger.info("Fetched alert thresholds: %s", thresholds)
+        return thresholds
+    except ClientError as e:
+        logger.error("Failed to fetch alert thresholds from S3: %s", str(e))
+        raise
+
+def create_resource_alarms(resource_info: Dict[str, Any], thresholds: Dict[str, Any]) -> None:
+    """
+    Creates CloudWatch alarms for the onboarded resource based on thresholds.
+    """
+    resource_type = resource_info["resource_type"]
+    resource_id = resource_info["resource_id"]
+    region = resource_info["region"]
+
+    # Example: EC2 CPU Utilization
+    if resource_type == "EC2":
+        alarm_config = thresholds.get("EC2", {})
+        if not alarm_config:
+            raise ValueError("No alert thresholds defined for EC2.")
+        for metric, config in alarm_config.items():
+            alarm_name = f"{resource_type}-{resource_id}-{metric}-alarm"
+            try:
+                cloudwatch.put_metric_alarm(
+                    AlarmName=alarm_name,
+                    ComparisonOperator=config["comparison_operator"],
+                    EvaluationPeriods=config["evaluation_periods"],
+                    MetricName=metric,
+                    Namespace="AWS/EC2",
+                    Period=config["period"],
+                    Statistic=config["statistic"],
+                    Threshold=config["threshold"],
+                    AlarmDescription=config.get("description", f"{metric} alarm for {resource_id}"),
+                    ActionsEnabled=True,
+                    AlarmActions=[SNS_TOPIC_ARN],
+                    OKActions=[SNS_TOPIC_ARN],
+                    Dimensions=[{"Name": "InstanceId", "Value": resource_id}],
+                    Tags=[
+                        {"Key": "Project", "Value": os.environ.get("PROJECT_NAME", "cloud-resource-monitoring")},
+                        {"Key": "ResourceId", "Value": resource_id}
+                    ]
+                )
+                logger.info("Created CloudWatch alarm: %s", alarm_name)
+            except ClientError as e:
+                logger.error("Failed to create alarm %s: %s", alarm_name, str(e))
+                raise
+
+    # Extend for other resource types (RDS, S3, Lambda) as needed
+
+def update_dashboard_config(resource_info: Dict[str, Any]) -> None:
+    """
+    Updates the dashboard configuration in S3 to include the new resource.
+    """
+    bucket, key = parse_s3_uri(DASHBOARD_CONFIG_S3)
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        dashboard_config = json.loads(response["Body"].read())
+        # Add resource to dashboard config if not present
+        resources = dashboard_config.get("resources", [])
+        resource_entry = {
+            "type": resource_info["resource_type"],
+            "id": resource_info["resource_id"],
+            "region": resource_info["region"]
+        }
+        if resource_entry not in resources:
+            resources.append(resource_entry)
+            dashboard_config["resources"] = resources
+            s3.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=json.dumps(dashboard_config).encode("utf-8"),
+                ContentType="application/json"
+            )
+            logger.info("Updated dashboard config with new resource: %s", resource_entry)
+    except ClientError as e:
+        logger.error("Failed to update dashboard config in S3: %s", str(e))
+        raise
+
+def log_audit_event(action: str, resource_info: Dict[str, Any], status: str, details: str) -> None:
+    """
+    Logs onboarding event to DynamoDB audit log table.
+    """
+    table = dynamodb.Table(AUDIT_LOG_TABLE)
+    try:
+        item = {
+            "alert_id": f"{action}-{resource_info.get('resource_id', 'unknown')}",
+            "event_timestamp": int(get_utc_timestamp()),
+            "action": action,
+            "resource_type": resource_info.get("resource_type", ""),
+            "resource_id": resource_info.get("resource_id", ""),
+            "status": status,
+            "details": details,
+            "ttl": int(get_utc_timestamp()) + (365 * 24 * 3600)  # 1 year retention
+        }
+        table.put_item(Item=item)
+        logger.info("Logged audit event: %s", item)
+    except ClientError as e:
+        logger.error("Failed to log audit event: %s", str(e))
+        # Do not raise further to avoid infinite error loop
+
+def notify_onboarding(resource_info: Dict[str, Any]) -> None:
+    """
+    Sends onboarding notification to DevOps team via SNS.
+    """
+    message = {
+        "event": "resource_onboarded",
+        "resource_type": resource_info["resource_type"],
+        "resource_id": resource_info["resource_id"],
+        "region": resource_info["region"],
+        "tags": resource_info.get("tags", {}),
+        "status": "monitoring_configured"
+    }
+    try:
+        sns.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Message=json.dumps(message),
+            Subject=f"Resource Onboarded: {resource_info['resource_type']} {resource_info['resource_id']}"
+        )
+        logger.info("Sent onboarding notification for resource: %s", resource_info["resource_id"])
+    except ClientError as e:
+        logger.error("Failed to send onboarding notification: %s", str(e))
+        # Do not raise further to avoid infinite error loop
+
+def parse_s3_uri(s3_uri: str) -> (str, str):
+    """
+    Parses an S3 URI (bucket/key) from a string.
+    """
+    if s3_uri.startswith("s3://"):
+        s3_uri = s3_uri[5:]
+    parts = s3_uri.split("/", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Invalid S3 URI: {s3_uri}")
+    return parts[0], parts[1]
+
+def get_utc_timestamp() -> int:
+    """
+    Returns current UTC timestamp as integer.
+    """
+    import time
+    return int(time.time())
+
+# Exported for Lambda handler
+__all__ = ["lambda_handler"]

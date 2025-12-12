@@ -1,0 +1,261 @@
+import os
+import json
+import logging
+import boto3
+from botocore.exceptions import ClientError
+from typing import Any, Dict, List
+
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Environment variables (set via Terraform)
+AUDIT_LOG_TABLE = os.environ.get("AUDIT_LOG_TABLE")
+SNS_TOPIC_ARN = os.environ.get("SNS_TOPIC_ARN")
+
+# AWS clients
+dynamodb = boto3.resource("dynamodb")
+sns = boto3.client("sns")
+
+# Security-relevant CloudTrail event types to monitor
+SECURITY_EVENT_NAMES = [
+    "ConsoleLogin",
+    "UnauthorizedOperation",
+    "CreateUser",
+    "DeleteUser",
+    "PutUserPolicy",
+    "AttachUserPolicy",
+    "DetachUserPolicy",
+    "CreateAccessKey",
+    "DeleteAccessKey",
+    "UpdateLoginProfile",
+    "CreateRole",
+    "DeleteRole",
+    "PutRolePolicy",
+    "AttachRolePolicy",
+    "DetachRolePolicy",
+    "CreatePolicy",
+    "DeletePolicy",
+    "ModifySecurityGroupRules",
+    "AuthorizeSecurityGroupIngress",
+    "RevokeSecurityGroupIngress",
+    "AuthorizeSecurityGroupEgress",
+    "RevokeSecurityGroupEgress",
+    "ChangePassword",
+    "UpdateAssumeRolePolicy",
+    "CreateTrail",
+    "DeleteTrail",
+    "UpdateTrail",
+    "StartLogging",
+    "StopLogging",
+    "PutBucketPolicy",
+    "DeleteBucketPolicy",
+    "PutBucketAcl",
+    "PutBucketPublicAccessBlock",
+    "DeleteBucketPublicAccessBlock",
+    "PutObjectAcl",
+    "DeleteObjectAcl",
+    "PutBucketEncryption",
+    "DeleteBucketEncryption",
+    "PutBucketVersioning",
+    "DeleteBucketVersioning",
+    "PutBucketLogging",
+    "DeleteBucketLogging",
+    "PutBucketReplication",
+    "DeleteBucketReplication",
+    "PutBucketLifecycle",
+    "DeleteBucketLifecycle",
+    "PutBucketTagging",
+    "DeleteBucketTagging",
+    "PutBucketWebsite",
+    "DeleteBucketWebsite",
+    "PutBucketNotification",
+    "DeleteBucketNotification",
+    "PutBucketCORS",
+    "DeleteBucketCORS",
+    "PutBucketRequestPayment",
+    "DeleteBucketRequestPayment",
+    "PutBucketOwnershipControls",
+    "DeleteBucketOwnershipControls",
+    "PutBucketIntelligentTieringConfiguration",
+    "DeleteBucketIntelligentTieringConfiguration",
+    "PutBucketObjectLockConfiguration",
+    "DeleteBucketObjectLockConfiguration",
+    "PutBucketAnalyticsConfiguration",
+    "DeleteBucketAnalyticsConfiguration",
+    "PutBucketInventoryConfiguration",
+    "DeleteBucketInventoryConfiguration",
+    "PutBucketMetricsConfiguration",
+    "DeleteBucketMetricsConfiguration",
+    "PutBucketAccelerateConfiguration",
+    "DeleteBucketAccelerateConfiguration",
+    "PutBucketLogging",
+    "DeleteBucketLogging",
+    "PutBucketReplication",
+    "DeleteBucketReplication",
+    "PutBucketLifecycle",
+    "DeleteBucketLifecycle",
+    "PutBucketTagging",
+    "DeleteBucketTagging",
+    "PutBucketWebsite",
+    "DeleteBucketWebsite",
+    "PutBucketNotification",
+    "DeleteBucketNotification",
+    "PutBucketCORS",
+    "DeleteBucketCORS",
+    "PutBucketRequestPayment",
+    "DeleteBucketRequestPayment",
+    "PutBucketOwnershipControls",
+    "DeleteBucketOwnershipControls",
+    "PutBucketIntelligentTieringConfiguration",
+    "DeleteBucketIntelligentTieringConfiguration",
+    "PutBucketObjectLockConfiguration",
+    "DeleteBucketObjectLockConfiguration",
+    "PutBucketAnalyticsConfiguration",
+    "DeleteBucketAnalyticsConfiguration",
+    "PutBucketInventoryConfiguration",
+    "DeleteBucketInventoryConfiguration",
+    "PutBucketMetricsConfiguration",
+    "DeleteBucketMetricsConfiguration",
+    "PutBucketAccelerateConfiguration",
+    "DeleteBucketAccelerateConfiguration"
+]
+
+def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Lambda entry point for detecting and logging security-relevant events from CloudTrail.
+    """
+    logger.info("Received CloudTrail event: %s", json.dumps(event))
+    try:
+        records = extract_cloudtrail_records(event)
+        logger.info("Extracted %d CloudTrail records.", len(records))
+
+        for record in records:
+            if is_security_event(record):
+                logger.info("Detected security event: %s", record.get("eventName"))
+                log_audit_event(record)
+                notify_security_alert(record)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"message": "Security event processing complete."})
+        }
+    except Exception as e:
+        logger.error("Security event processing failed: %s", str(e), exc_info=True)
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": str(e)})
+        }
+
+def extract_cloudtrail_records(event: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Extracts CloudTrail records from the Lambda event.
+    """
+    # CloudTrail events may be delivered via SNS, S3, or direct invocation
+    records = []
+    if "Records" in event:
+        # SNS or S3 event
+        for rec in event["Records"]:
+            if "Sns" in rec:
+                # SNS message
+                msg = rec["Sns"]["Message"]
+                try:
+                    msg_json = json.loads(msg)
+                    if "Records" in msg_json:
+                        records.extend(msg_json["Records"])
+                    elif "eventName" in msg_json:
+                        records.append(msg_json)
+                except Exception:
+                    continue
+            elif "eventName" in rec:
+                records.append(rec)
+    elif "detail" in event and "eventName" in event["detail"]:
+        # EventBridge direct event
+        records.append(event["detail"])
+    elif "eventName" in event:
+        records.append(event)
+    return records
+
+def is_security_event(record: Dict[str, Any]) -> bool:
+    """
+    Determines if a CloudTrail record is security-relevant.
+    """
+    event_name = record.get("eventName", "")
+    if event_name in SECURITY_EVENT_NAMES:
+        return True
+    # Unauthorized access detection
+    if "errorCode" in record and record["errorCode"] in ["UnauthorizedOperation", "AccessDenied"]:
+        return True
+    # Console login failures
+    if event_name == "ConsoleLogin" and record.get("responseElements", {}).get("ConsoleLogin") == "Failure":
+        return True
+    return False
+
+def log_audit_event(record: Dict[str, Any]) -> None:
+    """
+    Logs security event to DynamoDB audit log table.
+    """
+    table = dynamodb.Table(AUDIT_LOG_TABLE)
+    try:
+        item = {
+            "alert_id": f"security-{record.get('eventID', get_utc_timestamp())}",
+            "event_timestamp": int(get_utc_timestamp()),
+            "action": "security_event",
+            "event_name": record.get("eventName", ""),
+            "user_identity": json.dumps(record.get("userIdentity", {})),
+            "resource": extract_resource_from_record(record),
+            "status": "triggered",
+            "details": json.dumps(record),
+            "ttl": int(get_utc_timestamp()) + (365 * 24 * 3600)  # 1 year retention
+        }
+        table.put_item(Item=item)
+        logger.info("Logged security audit event: %s", item)
+    except ClientError as e:
+        logger.error("Failed to log security audit event: %s", str(e))
+        # Do not raise further to avoid infinite error loop
+
+def notify_security_alert(record: Dict[str, Any]) -> None:
+    """
+    Sends security alert notification via SNS.
+    """
+    message = {
+        "event": "security_alert",
+        "event_name": record.get("eventName", ""),
+        "user_identity": record.get("userIdentity", {}),
+        "resource": extract_resource_from_record(record),
+        "status": "triggered",
+        "details": record
+    }
+    try:
+        sns.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Message=json.dumps(message),
+            Subject=f"Security Alert: {record.get('eventName', '')}"
+        )
+        logger.info("Sent security alert notification for event: %s", record.get("eventName", ""))
+    except ClientError as e:
+        logger.error("Failed to send security alert notification: %s", str(e))
+        # Do not raise further to avoid infinite error loop
+
+def extract_resource_from_record(record: Dict[str, Any]) -> str:
+    """
+    Extracts resource information from CloudTrail record.
+    """
+    if "resources" in record and record["resources"]:
+        return json.dumps(record["resources"])
+    if "requestParameters" in record and "bucketName" in record["requestParameters"]:
+        return record["requestParameters"]["bucketName"]
+    if "requestParameters" in record and "groupId" in record["requestParameters"]:
+        return record["requestParameters"]["groupId"]
+    if "userIdentity" in record and "arn" in record["userIdentity"]:
+        return record["userIdentity"]["arn"]
+    return "unknown"
+
+def get_utc_timestamp() -> int:
+    """
+    Returns current UTC timestamp as integer.
+    """
+    import time
+    return int(time.time())
+
+# Exported for Lambda handler
+__all__ = ["lambda_handler"]

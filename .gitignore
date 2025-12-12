@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Python
 __pycache__/
 *.py[cod]
@@ -150,3 +151,168 @@ infra/*.tfvars
 infra/*.tfplan
 infra/crash.log
 infra/*.backup
+=======
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Pyre type checker
+.pyre/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# PyCharm
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# Environments
+.env
+.env.*
+.venv
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# AWS credentials and config (never commit these)
+*.pem
+*.key
+*.crt
+*.der
+.aws/
+.aws-credentials
+.aws-config
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# Lambda deployment packages
+lambda/*.zip
+lambda/**/*.zip
+
+# Local config files
+config/*.local
+config/*.secret
+config/*.bak
+config/*.tmp
+config/*.json
+config/*.yaml
+config/*.yml
+
+# S3 sync temp files
+*.s3-backup
+*.s3-upload
+
+# Logs
+*.log
+logs/
+lambda/*/logs/
+lambda/**/logs/
+
+# System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+Desktop.ini
+
+# Editor swap files
+*~
+*.swp
+*.swo
+*.tmp
+
+# Documentation build artifacts
+docs/_build/
+docs/.doctrees/
+docs/.buildinfo
+
+# Slack/Teams integration secrets
+*.slack
+*.teams
+*.webhook
+
+# DynamoDB local files
+*.dynamodb
+*.ddb
+
+# CloudWatch dashboard exports
+*.cloudwatch.json
+
+# Miscellaneous
+infrastructure/.terraform/
+infrastructure/*.tfplan
+infrastructure/*.tfvars
+infrastructure/*.tfvars.json
+infrastructure/*.backup
+
+# Ignore any backup or temp files
+*.bak
+*.tmp
+*.orig
+*.old
+
+# Ignore Python wheel files
+*.whl
+
+# Ignore test output
+test-output/
+tests/__pycache__/
+lambda/*/__pycache__/
+lambda/**/__pycache__/
+>>>>>>> d1a4f7c08d028ec8162fb4bc59a7a78deb583177

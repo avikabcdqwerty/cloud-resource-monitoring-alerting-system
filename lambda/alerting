@@ -1,0 +1,196 @@
+import os
+import json
+import logging
+import boto3
+import urllib.request
+from botocore.exceptions import ClientError
+from typing import Any, Dict
+
+# Configure logging
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+# Environment variables (set via Terraform)
+AUDIT_LOG_TABLE = os.environ.get("AUDIT_LOG_TABLE")
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
+TEAMS_WEBHOOK_URL = os.environ.get("TEAMS_WEBHOOK_URL")
+
+# AWS clients
+dynamodb = boto3.resource("dynamodb")
+cloudwatch = boto3.client("cloudwatch")
+
+def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Lambda entry point for processing alerts, updating statuses, and logging incident resolutions.
+    Supports operational and security alerts.
+    """
+    logger.info("Received alert event: %s", json.dumps(event))
+    try:
+        alert = parse_alert_event(event)
+        logger.info("Parsed alert: %s", alert)
+
+        # Step 1: Deliver alert to notification channels
+        deliver_alert(alert)
+
+        # Step 2: Update alert status if resolved
+        if alert.get("status") == "RESOLVED":
+            update_alert_status(alert)
+            log_audit_event(
+                action="alert_resolved",
+                alert=alert,
+                status="resolved",
+                details="Alert resolved and incident logged."
+            )
+        else:
+            log_audit_event(
+                action="alert_triggered",
+                alert=alert,
+                status="triggered",
+                details="Alert triggered and notification sent."
+            )
+
+        return {
+            "statusCode": 200,
+            "body": json.dumps({"message": "Alert processed successfully."})
+        }
+    except Exception as e:
+        logger.error("Alert processing failed: %s", str(e), exc_info=True)
+        log_audit_event(
+            action="alert_processing_failed",
+            alert=event,
+            status="failure",
+            details=str(e)
+        )
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": str(e)})
+        }
+
+def parse_alert_event(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Parses the incoming alert event from SNS/CloudWatch.
+    """
+    # SNS events wrap the message in 'Records' or 'Message'
+    if "Records" in event and event["Records"]:
+        sns_msg = event["Records"][0].get("Sns", {}).get("Message", "{}")
+        alert = json.loads(sns_msg)
+    elif "Message" in event:
+        alert = json.loads(event["Message"])
+    else:
+        alert = event
+    # Ensure required fields
+    required_fields = ["alert_id", "resource_type", "resource_id", "metric_name", "status"]
+    for field in required_fields:
+        if field not in alert:
+            raise ValueError(f"Missing required alert field: {field}")
+    return alert
+
+def deliver_alert(alert: Dict[str, Any]) -> None:
+    """
+    Delivers alert to Slack, Teams, and logs to CloudWatch.
+    """
+    message = format_alert_message(alert)
+    # Slack
+    if SLACK_WEBHOOK_URL:
+        try:
+            send_slack_notification(SLACK_WEBHOOK_URL, message)
+            logger.info("Delivered alert to Slack.")
+        except Exception as e:
+            logger.error("Failed to deliver alert to Slack: %s", str(e))
+    # Teams
+    if TEAMS_WEBHOOK_URL:
+        try:
+            send_teams_notification(TEAMS_WEBHOOK_URL, message)
+            logger.info("Delivered alert to Teams.")
+        except Exception as e:
+            logger.error("Failed to deliver alert to Teams: %s", str(e))
+    # CloudWatch log (for audit)
+    logger.info("Alert delivered: %s", message)
+
+def format_alert_message(alert: Dict[str, Any]) -> str:
+    """
+    Formats the alert message for notification channels.
+    """
+    status_emoji = ":red_circle:" if alert.get("status") == "ALARM" else ":white_check_mark:"
+    return (
+        f"{status_emoji} *Alert* - {alert.get('metric_name')} on {alert.get('resource_type')} "
+        f"{alert.get('resource_id')}\n"
+        f"Status: {alert.get('status')}\n"
+        f"Threshold: {alert.get('threshold', 'N/A')}\n"
+        f"Current Value: {alert.get('current_value', 'N/A')}\n"
+        f"Timestamp: {alert.get('timestamp', 'N/A')}\n"
+        f"Details: {alert.get('description', '')}"
+    )
+
+def send_slack_notification(webhook_url: str, message: str) -> None:
+    """
+    Sends a notification to Slack via webhook.
+    """
+    payload = json.dumps({"text": message})
+    req = urllib.request.Request(
+        webhook_url,
+        data=payload.encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req) as resp:
+        if resp.status != 200:
+            raise RuntimeError(f"Slack webhook failed: {resp.status}")
+
+def send_teams_notification(webhook_url: str, message: str) -> None:
+    """
+    Sends a notification to Microsoft Teams via webhook.
+    """
+    payload = json.dumps({
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "summary": "Cloud Resource Alert",
+        "text": message
+    })
+    req = urllib.request.Request(
+        webhook_url,
+        data=payload.encode("utf-8"),
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req) as resp:
+        if resp.status != 200:
+            raise RuntimeError(f"Teams webhook failed: {resp.status}")
+
+def update_alert_status(alert: Dict[str, Any]) -> None:
+    """
+    Updates the alert status in CloudWatch (if applicable).
+    """
+    # For demonstration, we log the resolution. In production, integrate with incident management.
+    logger.info("Alert resolved for %s: %s", alert.get("resource_id"), alert.get("alert_id"))
+
+def log_audit_event(action: str, alert: Dict[str, Any], status: str, details: str) -> None:
+    """
+    Logs alert event to DynamoDB audit log table.
+    """
+    table = dynamodb.Table(AUDIT_LOG_TABLE)
+    try:
+        item = {
+            "alert_id": alert.get("alert_id", "unknown"),
+            "event_timestamp": int(get_utc_timestamp()),
+            "action": action,
+            "resource_type": alert.get("resource_type", ""),
+            "resource_id": alert.get("resource_id", ""),
+            "metric_name": alert.get("metric_name", ""),
+            "status": status,
+            "details": details,
+            "ttl": int(get_utc_timestamp()) + (365 * 24 * 3600)  # 1 year retention
+        }
+        table.put_item(Item=item)
+        logger.info("Logged audit event: %s", item)
+    except ClientError as e:
+        logger.error("Failed to log audit event: %s", str(e))
+        # Do not raise further to avoid infinite error loop
+
+def get_utc_timestamp() -> int:
+    """
+    Returns current UTC timestamp as integer.
+    """
+    import time
+    return int(time.time())
+
+# Exported for Lambda handler
+__all__ = ["lambda_handler"]
